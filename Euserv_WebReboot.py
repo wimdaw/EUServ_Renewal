@@ -153,10 +153,8 @@ def _get_reset_page(bot: RenewalBot):
 
 
 def _parse_ajax_var(html: str, name: str) -> str:
-    """从 ajax 响应里提取 var 变量值（getv(fullres,'name') 的 Python 版）。"""
-    m = re.search(
-        rf"var\s+{name}\s*=\s*['\"](.*?)['\"]\s*;", html, re.S
-    ) or re.search(rf"{name}\s*[:=]\s*['\"](.*?)['\"]", html, re.S)
+    """从 kc2 ajax 响应里提取 (name/)value(/name) 标签值。"""
+    m = re.search(rf"\({name}/\)(.*?)(/{name})", html, re.S)
     if not m:
         return ""
     value = m.group(1)
@@ -246,6 +244,7 @@ def _webreboot_one(bot: RenewalBot, order_id: str, reason_type: str) -> bool:
         f"&srv_id={srv_id}"
         f"&ord_no={page_ord}"
     )
+    # 与浏览器 exec_async 一致只发一次 GET，do_reset 是动作型接口严禁重复提交
     resp = bot.session.get(
         f"{er.EUSERV_BASE_URL}?{params}",
         headers={"user-agent": er.USER_AGENT},
@@ -254,36 +253,26 @@ def _webreboot_one(bot: RenewalBot, order_id: str, reason_type: str) -> bool:
     resp.raise_for_status()
 
     content = _parse_ajax_var(resp.text, "server_reset")
-    if not content:
-        # ajax GET 不行就退回 POST 表单
-        bot.log("GET 方式无 server_reset 响应，尝试 POST 表单...")
-        resp = bot.session.post(
-            er.EUSERV_BASE_URL,
-            headers={"user-agent": er.USER_AGENT, "origin": er.EUSERV_ORIGIN},
-            data={
-                "sess_id": bot.sess_id,
-                "subaction": "kc2_server_reset_do_reset",
-                "server_reset_reason_type": reason_type,
-                "srv_id": srv_id,
-                "ord_no": page_ord,
-            },
-            timeout=er.HTTP_TIMEOUT_SECONDS,
+    if content:
+        clean = re.sub(r"\s+", " ", content).strip()
+        if "error" in clean.lower() or "fail" in clean.lower():
+            bot.log(f"❗ 合同 {order_id}: 面板返回错误信息: {clean[:300]}", LogLevel.WARNING)
+            raise RuntimeError(f"合同 {order_id}: 面板拒绝重启: {clean[:200]}")
+        bot.log(f"✅ 合同 {order_id} Webreboot 已触发，面板响应: {clean[:400]}")
+        return True
+
+    # 无 server_reset 内容时按 rc/rs 错误协议解析
+    rc_m = re.search(r"\(rc/\)(\d+)(/rc)", resp.text)
+    rs_m = re.search(r"\(rs/\)(.*?)(/rs)", resp.text, re.S)
+    rc = rc_m.group(1) if rc_m else "?"
+    msg = rs_m.group(1).strip() if rs_m else resp.text[:200]
+    if rc == "1007" or "already running" in msg.lower():
+        bot.log(
+            f"⏳ 合同 {order_id}: 面板提示该服务器已有任务在执行（很可能是刚才的重启指令尚未完成），无需重复下发"
         )
-        resp.raise_for_status()
-        content = _parse_ajax_var(resp.text, "server_reset")
-
-    clean = re.sub(r"\s+", " ", content).strip()
-    if not clean:
-        bot.log(f"❗ 合同 {order_id}: 重启请求无有效响应，原始片段: {resp.text[:300]!r}", LogLevel.WARNING)
-        raise RuntimeError(f"合同 {order_id}: Webreboot 响应异常")
-
-    low = clean.lower()
-    if "error" in low or "fail" in low:
-        bot.log(f"❗ 合同 {order_id}: 面板返回错误信息: {clean[:300]}", LogLevel.WARNING)
-        raise RuntimeError(f"合同 {order_id}: 面板拒绝重启: {clean[:200]}")
-
-    bot.log(f"✅ 合同 {order_id} Webreboot 已触发，面板响应: {clean[:400]}")
-    return True
+        return True
+    bot.log(f"❗ 合同 {order_id}: 面板返回 rc={rc}: {msg[:300]}", LogLevel.WARNING)
+    raise RuntimeError(f"合同 {order_id}: Webreboot 失败 rc={rc}: {msg[:200]}")
 
 
 def reboot_account(bot: RenewalBot, target: str, reason_type: str) -> bool:
