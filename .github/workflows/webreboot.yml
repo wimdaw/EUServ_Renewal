@@ -125,7 +125,7 @@ jobs:
             reinstall)
               CONFIRM=""
               [ "${{ github.event.inputs.confirm }}" = "true" ] && CONFIRM="confirm"
-              python Euserv_WebReboot.py reinstall "$TARGET" "${{ github.event.inputs.os }}" "$CONFIRM" "${{ github.event.inputs.os_lang }}"
+              python Euserv_WebReboot.py reinstall "$TARGET" "${{ github.event.inputs.os }}" "$CONFIRM" "${{ github.event.inputs.osps }}" "${{ github.event.inputs.os_lang }}"
               ;;
             *)
               python Euserv_WebReboot.py probe "$TARGET"

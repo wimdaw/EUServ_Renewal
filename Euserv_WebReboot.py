@@ -507,6 +507,7 @@ def main() -> None:
     arg3 = sys.argv[3] if len(sys.argv) > 3 else ""
     arg4 = sys.argv[4] if len(sys.argv) > 4 else ""
     arg5 = sys.argv[5] if len(sys.argv) > 5 else ""
+    arg6 = sys.argv[6] if len(sys.argv) > 6 else "en"
 
     if mode not in ("probe", "reboot", "reinstall"):
         raise SystemExit(f"未知模式: {mode}（支持 probe / reboot / reinstall）")
@@ -533,7 +534,7 @@ def main() -> None:
             elif mode == "reboot":
                 reboot_account(bot, contract_target, arg3 or "2")
             else:
-                reinstall_account(bot, contract_target, os_arg, confirm, osps_id=arg5)
+                reinstall_account(bot, contract_target, os_arg, confirm, osps_id=arg5, lang=arg6)
         except Exception as e:  # noqa: BLE001 —— 顶层兜底，保证日志与 TG 报告完整
             bot.log(f"❗ 执行失败: {e}", LogLevel.WARNING)
             ok = False
