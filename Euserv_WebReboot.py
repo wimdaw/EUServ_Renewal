@@ -143,15 +143,13 @@ def _choose_order(bot: RenewalBot, order_id: str) -> str:
     return step1.text
 
 
-def _get_reset_page(bot: RenewalBot) -> str:
-    """访问 Webreboot 初始化页并返回 HTML。"""
-    page = bot.session.get(
+def _get_reset_page(bot: RenewalBot):
+    """访问 Webreboot 初始化页，返回 Response 对象。"""
+    return bot.session.get(
         f"{er.EUSERV_BASE_URL}?sess_id={bot.sess_id}&subaction=kc2_server_reset_init",
         headers={"user-agent": er.USER_AGENT},
         timeout=er.HTTP_TIMEOUT_SECONDS,
     )
-    page.raise_for_status()
-    return page.text
 
 
 def _parse_ajax_var(html: str, name: str) -> str:
@@ -202,6 +200,7 @@ def probe_account(bot: RenewalBot) -> bool:
         if "kc2_server_reset_init" in detail:
             bot.log(f"---------- 合同 {order_id} Webreboot 初始化页 ----------")
             reset_page = _get_reset_page(bot)
+            reset_page.raise_for_status()
             with open(f"probe_reset_{order_id}.html", "w", encoding="utf-8") as f:
                 f.write(reset_page.text)
             for line in extract_candidates(reset_page.text):
@@ -227,6 +226,7 @@ def _webreboot_one(bot: RenewalBot, order_id: str, reason_type: str) -> bool:
         return False
 
     reset_page = _get_reset_page(bot)
+    reset_page.raise_for_status()
     srv_m = re.search(r"'srv_id='\s*\+\s*(\d+)", reset_page.text)
     ord_m = re.search(r"'ord_no='\s*\+\s*(\d+)", reset_page.text)
     if not srv_m or not ord_m:
