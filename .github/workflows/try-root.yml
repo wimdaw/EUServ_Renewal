@@ -1,0 +1,28 @@
+name: Euserv Try Root SSH
+on:
+  workflow_dispatch:
+    inputs:
+      passwords:
+        description: '额外候选密码(逗号分隔, 面板密码自动加入)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  tryroot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install paramiko
+      - name: Try root login and reinstall
+        env:
+          EUSERV_PASSWORD: ${{ secrets.EUSERV_PASSWORD }}
+          SSH_ROOT_PASSWORDS: ${{ github.event.inputs.passwords }}
+        run: |
+          python Euserv_TryRoot.py
