@@ -1,0 +1,33 @@
+name: Euserv Mail Dump
+on:
+  workflow_dispatch:
+    inputs:
+      keyword:
+        description: '邮件主题关键词(留空=列出全部 EUServ 今日邮件)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  maildump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+      - name: Dump mails
+        env:
+          EUSERV_USERNAME: ${{ secrets.EUSERV_USERNAME }}
+          EUSERV_PASSWORD: ${{ secrets.EUSERV_PASSWORD }}
+          EUSERV_2FA: ${{ secrets.EUSERV_2FA }}
+          EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          CLOUD_MAIL_API_URL: ${{ secrets.CLOUD_MAIL_API_URL }}
+        run: |
+          python Euserv_MailDump.py "${{ github.event.inputs.keyword }}"
