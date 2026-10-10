@@ -1,0 +1,61 @@
+name: Euserv Power
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe=抓电源页看状态 / on=若关机则开机'
+        type: choice
+        options:
+          - probe
+          - on
+        default: 'on'
+      target:
+        description: '目标账号序号(1/2)、合同号(如 450559)或 all'
+        required: false
+        default: 'all'
+permissions:
+  contents: read
+jobs:
+  power:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Cache Virtual Environment
+        id: cache-venv
+        uses: actions/cache@v5
+        with:
+          path: venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+      - name: Create venv and Install dependencies
+        run: |
+          if [ ! -d venv/bin ]; then
+            python -m venv venv
+          fi
+          source venv/bin/activate
+          if ! python -c "import requests, bs4" 2>/dev/null; then
+            pip install -r requirements.txt
+          fi
+      - name: Run power script
+        env:
+          EUSERV_USERNAME: ${{ secrets.EUSERV_USERNAME }}
+          EUSERV_PASSWORD: ${{ secrets.EUSERV_PASSWORD }}
+          EUSERV_2FA: ${{ secrets.EUSERV_2FA }}
+          CAPTCHA_USERID: ${{ secrets.CAPTCHA_USERID }}
+          CAPTCHA_APIKEY: ${{ secrets.CAPTCHA_APIKEY }}
+        run: |
+          source venv/bin/activate
+          python Euserv_Power.py ${{ github.event.inputs.mode }} ${{ github.event.inputs.target }}
+      - name: Upload power page artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: power-dump
+          path: |
+            power_*.html
+          if-no-files-found: ignore
+          retention-days: 7
