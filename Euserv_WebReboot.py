@@ -365,10 +365,20 @@ def _reinstall_details(bot: RenewalBot, ord_no: str, lang: str = "en") -> dict:
         for o in re.finditer(r"<option[^>]*value=\"([^\"]*)\"[^>]*>([^<]*)", sel.group(1)):
             devices.append({"id": o.group(1), "name": _strip_tags(o.group(2))})
 
-    return {"os_list": os_list, "devices": devices}
+    # postinstall 脚本下拉（账号级预置脚本，重装时通过 srv_osps_id 引用）
+    osps: list[dict] = []
+    psel = re.search(
+        r"<select[^>]*name=\"kc2_server_reinstall_select_postinstall_script\"[^>]*>(.*?)</select>",
+        text, re.S,
+    )
+    if psel:
+        for o in re.finditer(r'<option[^>]*value="([^"]*)"[^>]*>([^<]*)', psel.group(1)):
+            osps.append({"id": o.group(1), "name": _strip_tags(o.group(2))})
+
+    return {"os_list": os_list, "devices": devices, "postinstalls": osps}
 
 
-def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, confirm: bool, lang: str = "en") -> dict:
+def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, confirm: bool, lang: str = "en", osps_id: str = "") -> dict:
     """提交重装订单。confirm=False 时仅询价（面板返回 rc=1030 与支付明细，不会执行）。"""
     params = (
         f"sess_id={bot.sess_id}"
@@ -379,6 +389,8 @@ def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, confirm: bool, la
         f"&wipe_hdds=1"
         f"&reset_bootdevice=1"
     )
+    if osps_id:
+        params += f"&srv_osps_id={osps_id}"
     if confirm:
         params += "&confirm_os_license_payment=1"
     resp = bot.session.get(
@@ -393,7 +405,7 @@ def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, confirm: bool, la
         return {"rc": "PARSE_ERROR", "rs": resp.text[:400]}
 
 
-def reinstall_account(bot: RenewalBot, target: str, os_arg: str, confirm: bool, lang: str = "en") -> bool:
+def reinstall_account(bot: RenewalBot, target: str, os_arg: str, confirm: bool, osps_id: str = "", lang: str = "en") -> bool:
     """重装流程：list 模式列系统；给 os_id 则下单（先询价）。"""
     bot.log(f"--- Reinstall 账号【{bot.account_name}】target={target} ---")
     bot.prewarm_ocr()
@@ -431,6 +443,11 @@ def reinstall_account(bot: RenewalBot, target: str, os_arg: str, confirm: bool, 
     devices = details["devices"]
     if devices:
         bot.log(f"安装设备: {[(d['id'], d['name']) for d in devices]}")
+    osps = details.get("postinstalls", [])
+    if osps:
+        bot.log(f"Postinstall 脚本: {[(p['id'], p['name']) for p in osps]}")
+    else:
+        bot.log("⚠️ 账号下没有 Postinstall 脚本（重装后 root 密码将使用模板默认）")
 
     if os_arg in ("", "list", "-"):
         bot.log(f"📋 合同 {order_id} 可安装系统（os_lang={lang}），共 {len(os_list)} 项：")
@@ -445,7 +462,7 @@ def reinstall_account(bot: RenewalBot, target: str, os_arg: str, confirm: bool, 
         return False
     os_name = matched[0]["name"]
 
-    result = _reinstall_order(bot, order_id, os_arg, confirm, lang)
+    result = _reinstall_order(bot, order_id, os_arg, confirm, lang, osps_id)
     rc = str(result.get("rc", "?"))
     if rc == "1030":
         bot.log(f"💰 合同 {order_id}: 重装【{os_name}】需要支付确认，面板返回支付明细:")
@@ -489,7 +506,7 @@ def main() -> None:
     target = sys.argv[2] if len(sys.argv) > 2 else "all"
     arg3 = sys.argv[3] if len(sys.argv) > 3 else ""
     arg4 = sys.argv[4] if len(sys.argv) > 4 else ""
-    arg5 = sys.argv[5] if len(sys.argv) > 5 else "en"
+    arg5 = sys.argv[5] if len(sys.argv) > 5 else ""
 
     if mode not in ("probe", "reboot", "reinstall"):
         raise SystemExit(f"未知模式: {mode}（支持 probe / reboot / reinstall）")
@@ -516,7 +533,7 @@ def main() -> None:
             elif mode == "reboot":
                 reboot_account(bot, contract_target, arg3 or "2")
             else:
-                reinstall_account(bot, contract_target, os_arg, confirm, arg5 or "en")
+                reinstall_account(bot, contract_target, os_arg, confirm, osps_id=arg5)
         except Exception as e:  # noqa: BLE001 —— 顶层兜底，保证日志与 TG 报告完整
             bot.log(f"❗ 执行失败: {e}", LogLevel.WARNING)
             ok = False

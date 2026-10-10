@@ -22,6 +22,10 @@ on:
         description: '重启理由: 1=Maintenance 2=Server does not respond 3=Other'
         required: false
         default: '2'
+      osps:
+        description: 'reinstall 模式专用: postinstall 脚本 id'
+        required: false
+        default: ''
       os:
         description: '重装: list=列出系统 / os_id=要装的系统'
         required: false
