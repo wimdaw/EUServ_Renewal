@@ -58,5 +58,6 @@ jobs:
           path: |
             power_*.html
             rescue_*.html
+            show_*.html
           if-no-files-found: ignore
           retention-days: 7

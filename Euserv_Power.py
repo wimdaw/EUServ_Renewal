@@ -140,6 +140,21 @@ def power_account(bot: RenewalBot, target: str, action: str) -> bool:
             with open(f"rescue_{order_id}.html", "w", encoding="utf-8") as f:
                 f.write(resp.text)
             bot.log(f"🔍 合同 {order_id} Rescue 页已 dump 到 rescue_{order_id}.html")
+            for sub in ("show_kc2_customer_tools", "show_kc2_customer_extended_order_settings", "show_kc2_customer_preferences"):
+                resp2 = bot.session.get(
+                    f"{er.EUSERV_BASE_URL}"
+                    f"?sess_id={bot.sess_id}"
+                    f"&subaction={sub}",
+                    headers={"user-agent": er.USER_AGENT},
+                    timeout=er.HTTP_TIMEOUT_SECONDS,
+                )
+                fn = f"{sub}_{order_id}.html"
+                with open(fn, "w", encoding="utf-8") as f:
+                    f.write(resp2.text)
+                body = re.sub(r"<[^>]+>", " ", re.sub(r"<script.*?</script>", " ", resp2.text, flags=re.S))
+                body = re.sub(r"\s+", " ", body)
+                hit = [k for k in ("postinstall", "Postinstall") if k in resp2.text]
+                bot.log(f"🔍 {sub} dump 完成, postinstall 命中: {hit}")
         else:
             ok = _power_on_one(bot, order_id) and ok
     return ok
