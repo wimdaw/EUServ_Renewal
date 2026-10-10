@@ -166,7 +166,7 @@ def power_account(bot: RenewalBot, target: str, action: str) -> bool:
             with open(f"rescue_{order_id}.html", "w", encoding="utf-8") as f:
                 f.write(resp.text)
             bot.log(f"🔍 合同 {order_id} Rescue 页已 dump 到 rescue_{order_id}.html")
-            for sub in ("show_kc2_customer_tools", "show_kc2_customer_extended_order_settings", "show_kc2_customer_preferences", "show_kc2_server_serverdaten", "kc2_server_serverdaten_init"):
+            for sub in ("show_kc2_customer_tools", "show_kc2_customer_extended_order_settings", "show_kc2_customer_preferences", "show_kc2_customer_webconsole", "kc2_server_serverdaten_init"):
                 resp2 = bot.session.get(
                     f"{er.EUSERV_BASE_URL}"
                     f"?sess_id={bot.sess_id}"
