@@ -1,0 +1,98 @@
+name: Euserv Web Reboot
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe=探测面板重启入口 / reboot=执行网页端重启'
+        type: choice
+        options:
+          - probe
+          - reboot
+        default: probe
+      target:
+        description: '目标账号序号(1/2)或 all'
+        required: false
+        default: 'all'
+      chat_id:
+        description: 'Telegram 来源校验（Worker 自动填，手动触发留空）'
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  webreboot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Cache Virtual Environment
+        id: cache-venv
+        uses: actions/cache@v5
+        with:
+          path: venv
+          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+      - name: Create venv and Install dependencies
+        run: |
+          if [ ! -d venv/bin ]; then
+            python -m venv venv
+          fi
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          if ! python -c "import requests, bs4" 2>/dev/null; then
+            pip install -r requirements.txt
+          fi
+      - name: Telegram 来源校验
+        env:
+          TG_USER_ID: ${{ secrets.TG_USER_ID }}
+        run: |
+          CHAT="$(echo '${{ github.event.inputs.chat_id }}' | tr -d '[:space:]')"
+          ALLOW="$(echo "$TG_USER_ID" | tr -d '[:space:]')"
+          if [ -z "$CHAT" ]; then
+            echo "ℹ️ 无 chat_id（手动触发），放行"
+            exit 0
+          fi
+          case ",$ALLOW," in
+            *",$CHAT,"*)
+              echo "✅ Telegram 来源校验通过: $CHAT"
+              ;;
+            *)
+              echo "❌ 未授权的 Telegram 用户，拒绝执行"
+              exit 1
+              ;;
+          esac
+      - name: Run web reboot script
+        env:
+          EUSERV_USERNAME: ${{ secrets.EUSERV_USERNAME }}
+          EUSERV_PASSWORD: ${{ secrets.EUSERV_PASSWORD }}
+          EUSERV_2FA: ${{ secrets.EUSERV_2FA }}
+          CAPTCHA_USERID: ${{ secrets.CAPTCHA_USERID }}
+          CAPTCHA_APIKEY: ${{ secrets.CAPTCHA_APIKEY }}
+          CLOUD_MAIL_API_URL: ${{ secrets.CLOUD_MAIL_API_URL }}
+          EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
+          EMAIL_USERNAME: ${{ secrets.EMAIL_USERNAME }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_USER_ID: ${{ secrets.TG_USER_ID }}
+          TG_API_HOST: ${{ secrets.TG_API_HOST }}
+        run: |
+          source venv/bin/activate
+          python Euserv_WebReboot.py ${{ github.event.inputs.mode }} ${{ github.event.inputs.target }}
+      - name: Upload probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: webreboot-probe
+          path: |
+            probe_*.html
+            captcha_failed.png
+          if-no-files-found: ignore
+          retention-days: 7
