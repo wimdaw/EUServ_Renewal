@@ -2,11 +2,22 @@
 """EUServ 面板网页端重启 (webreboot)。
 
 用法:
-  python Euserv_WebReboot.py probe             # 只读探测：登录面板，抓出所有疑似重启入口
-  python Euserv_WebReboot.py reboot [目标]      # 对指定账号(序号 1/2 或 all)执行网页端重启
+  python Euserv_WebReboot.py probe [目标]          # 只读探测面板重启入口
+  python Euserv_WebReboot.py reboot [目标] [理由]   # 网页端强制重启
+
+目标: 账号序号(1/2)、合同号(如 450559)或 all，默认 all
+理由: 1=Maintenance(planned) 2=Server does not respond 3=Other，默认 2
 
 设计目标：机器 SSH 失联时也能远程强制重启——整个流程只依赖
 EUServ 控制面板 (support.euserv.com) 的 HTTP 接口，与 VPS 本身是否存活无关。
+
+面板接口（2026-10 实测逆向）:
+  1. POST index.iphp  subaction=choose_order & ord_no=<合同号>      # 选中合同
+  2. GET  index.iphp?sess_id=..&subaction=kc2_server_reset_init      # Webreboot 页
+     页面 JS 内含 srv_id / ord_no
+  3. GET  index.iphp?sess_id=..&subaction=kc2_server_reset_do_reset
+         &server_reset_reason_type=<1|2|3> &srv_id=<srv_id> &ord_no=<合同号>
+     响应为 ajax JS，含 server_reset 变量（结果 HTML），无需邮件 PIN。
 """
 
 import re
@@ -110,6 +121,51 @@ def dump_nav_links(bot: RenewalBot, html: str) -> None:
         bot.log(f"   {line}")
 
 
+def _choose_order(bot: RenewalBot, order_id: str) -> str:
+    """选中合同并返回详情页 HTML。"""
+    step1 = bot.session.post(
+        er.EUSERV_BASE_URL,
+        headers={
+            "user-agent": er.USER_AGENT,
+            "Host": "support.euserv.com",
+            "origin": er.EUSERV_ORIGIN,
+        },
+        data={
+            "Submit": "Extend contract",
+            "sess_id": bot.sess_id,
+            "ord_no": order_id,
+            "subaction": "choose_order",
+            "choose_order_subaction": "show_contract_details",
+        },
+        timeout=er.HTTP_TIMEOUT_SECONDS,
+    )
+    step1.raise_for_status()
+    return step1.text
+
+
+def _get_reset_page(bot: RenewalBot) -> str:
+    """访问 Webreboot 初始化页并返回 HTML。"""
+    page = bot.session.get(
+        f"{er.EUSERV_BASE_URL}?sess_id={bot.sess_id}&subaction=kc2_server_reset_init",
+        headers={"user-agent": er.USER_AGENT},
+        timeout=er.HTTP_TIMEOUT_SECONDS,
+    )
+    page.raise_for_status()
+    return page.text
+
+
+def _parse_ajax_var(html: str, name: str) -> str:
+    """从 ajax 响应里提取 var 变量值（getv(fullres,'name') 的 Python 版）。"""
+    m = re.search(
+        rf"var\s+{name}\s*=\s*['\"](.*?)['\"]\s*;", html, re.S
+    ) or re.search(rf"{name}\s*[:=]\s*['\"](.*?)['\"]", html, re.S)
+    if not m:
+        return ""
+    value = m.group(1)
+    value = value.encode().decode("unicode_escape", errors="replace")
+    return value
+
+
 def probe_account(bot: RenewalBot) -> bool:
     """只读探测单个账号面板中的重启入口。返回是否成功完成探测。"""
     bot.log(f"--- 探测账号【{bot.account_name}】---")
@@ -135,43 +191,21 @@ def probe_account(bot: RenewalBot) -> bool:
     for srv in servers:
         order_id = srv["id"]
         bot.log(f"========== 合同 {order_id} 详情页候选 ==========")
-        step1 = bot.session.post(
-            er.EUSERV_BASE_URL,
-            headers={
-                "user-agent": er.USER_AGENT,
-                "Host": "support.euserv.com",
-                "origin": er.EUSERV_ORIGIN,
-            },
-            data={
-                "Submit": "Extend contract",
-                "sess_id": bot.sess_id,
-                "ord_no": order_id,
-                "subaction": "choose_order",
-                "choose_order_subaction": "show_contract_details",
-            },
-            timeout=er.HTTP_TIMEOUT_SECONDS,
-        )
-        step1.raise_for_status()
+        detail = _choose_order(bot, order_id)
         with open(f"probe_contract_{order_id}.html", "w", encoding="utf-8") as f:
-            f.write(step1.text)
-        for line in extract_candidates(step1.text):
+            f.write(detail)
+        for line in extract_candidates(detail):
             bot.log(line)
 
         # 详情页若带 Webreboot 导航，则继续只读访问 reset_init 页面，
         # 摸清确认表单结构（GET 仅展示，无副作用）
-        if "kc2_server_reset_init" in step1.text:
+        if "kc2_server_reset_init" in detail:
             bot.log(f"---------- 合同 {order_id} Webreboot 初始化页 ----------")
-            reset_page = bot.session.get(
-                f"{er.EUSERV_BASE_URL}?sess_id={bot.sess_id}&subaction=kc2_server_reset_init",
-                headers={"user-agent": er.USER_AGENT},
-                timeout=er.HTTP_TIMEOUT_SECONDS,
-            )
-            reset_page.raise_for_status()
+            reset_page = _get_reset_page(bot)
             with open(f"probe_reset_{order_id}.html", "w", encoding="utf-8") as f:
                 f.write(reset_page.text)
             for line in extract_candidates(reset_page.text):
                 bot.log(line)
-            # 完整输出主内容区可见文本，便于判断确认按钮与说明
             soup = BeautifulSoup(reset_page.text, "html.parser")
             main = soup.select_one("#main_content") or soup.body
             if main:
@@ -182,19 +216,110 @@ def probe_account(bot: RenewalBot) -> bool:
     return True
 
 
-def reboot_account(bot: RenewalBot) -> bool:
-    """对单个账号的所有 VPS 执行网页端重启（探明入口后实现）。"""
-    raise NotImplementedError("webreboot 流程待 probe 探明后实现")
+def _webreboot_one(bot: RenewalBot, order_id: str, reason_type: str) -> bool:
+    """对单个合同执行网页端重启。返回是否已触发。"""
+    detail = _choose_order(bot, order_id)
+    if "kc2_server_reset_init" not in detail:
+        bot.log(
+            f"⏭️ 合同 {order_id}: 面板未提供 Webreboot 入口（vServer 管理菜单未渲染），跳过",
+            LogLevel.WARNING,
+        )
+        return False
+
+    reset_page = _get_reset_page(bot)
+    srv_m = re.search(r"'srv_id='\s*\+\s*(\d+)", reset_page.text)
+    ord_m = re.search(r"'ord_no='\s*\+\s*(\d+)", reset_page.text)
+    if not srv_m or not ord_m:
+        raise RuntimeError(f"合同 {order_id}: reset 页解析不到 srv_id/ord_no，页面结构可能已变化")
+    srv_id = srv_m.group(1)
+    page_ord = ord_m.group(1)
+    if page_ord != str(order_id):
+        bot.log(f"⚠️ reset 页 ord_no={page_ord} 与目标 {order_id} 不一致，以页面为准继续", LogLevel.WARNING)
+
+    bot.log(
+        f"🔄 合同 {order_id} (srv_id={srv_id}) 正在触发 Webreboot (reason_type={reason_type})..."
+    )
+    params = (
+        f"sess_id={bot.sess_id}"
+        f"&subaction=kc2_server_reset_do_reset"
+        f"&server_reset_reason_type={reason_type}"
+        f"&srv_id={srv_id}"
+        f"&ord_no={page_ord}"
+    )
+    resp = bot.session.get(
+        f"{er.EUSERV_BASE_URL}?{params}",
+        headers={"user-agent": er.USER_AGENT},
+        timeout=er.HTTP_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+
+    content = _parse_ajax_var(resp.text, "server_reset")
+    if not content:
+        # ajax GET 不行就退回 POST 表单
+        bot.log("GET 方式无 server_reset 响应，尝试 POST 表单...")
+        resp = bot.session.post(
+            er.EUSERV_BASE_URL,
+            headers={"user-agent": er.USER_AGENT, "origin": er.EUSERV_ORIGIN},
+            data={
+                "sess_id": bot.sess_id,
+                "subaction": "kc2_server_reset_do_reset",
+                "server_reset_reason_type": reason_type,
+                "srv_id": srv_id,
+                "ord_no": page_ord,
+            },
+            timeout=er.HTTP_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        content = _parse_ajax_var(resp.text, "server_reset")
+
+    clean = re.sub(r"\s+", " ", content).strip()
+    if not clean:
+        bot.log(f"❗ 合同 {order_id}: 重启请求无有效响应，原始片段: {resp.text[:300]!r}", LogLevel.WARNING)
+        raise RuntimeError(f"合同 {order_id}: Webreboot 响应异常")
+
+    low = clean.lower()
+    if "error" in low or "fail" in low:
+        bot.log(f"❗ 合同 {order_id}: 面板返回错误信息: {clean[:300]}", LogLevel.WARNING)
+        raise RuntimeError(f"合同 {order_id}: 面板拒绝重启: {clean[:200]}")
+
+    bot.log(f"✅ 合同 {order_id} Webreboot 已触发，面板响应: {clean[:400]}")
+    return True
+
+
+def reboot_account(bot: RenewalBot, target: str, reason_type: str) -> bool:
+    """对单个账号下目标合同执行网页端重启。"""
+    bot.log(f"--- Webreboot 账号【{bot.account_name}】---")
+    bot.prewarm_ocr()
+    bot._perform_login()
+
+    servers = bot._get_servers()
+    targets = [s["id"] for s in servers if target == "all" or str(s["id"]) == str(target)]
+    if not targets:
+        bot.log(f"⏭️ 账号下没有匹配目标 {target} 的合同（现有: {[s['id'] for s in servers]}）")
+        return True
+
+    triggered = False
+    for order_id in targets:
+        try:
+            if _webreboot_one(bot, order_id, reason_type):
+                triggered = True
+        except Exception as e:  # noqa: BLE001 —— 单台失败不影响其余目标
+            bot.log(f"❗ 合同 {order_id} 重启失败: {e}", LogLevel.WARNING)
+            time.sleep(3)
+    if triggered:
+        bot.log("🎉 全部目标 Webreboot 指令已下发，等待机器重启（约 1-5 分钟后恢复网络）")
+    return True
 
 
 def select_bots(target: str) -> list[RenewalBot]:
-    """按目标序号(1/2)或 all 选择账号机器人。"""
+    """按目标序号(1/2)或 all 选择账号机器人；合同号目标时返回全部账号（后续按合同过滤）。"""
     accounts = parse_accounts()
     if accounts:
         bots = [RenewalBot(account=acct) for acct in accounts]
     else:
         bots = [RenewalBot()]
-    if target and target.lower() != "all":
+    # 纯序号（1/2）时选择对应账号；合同号(如 450559)或 all 时保留全部，按合同过滤
+    if target and target.lower() != "all" and len(target) <= 2 and target.isdigit():
         idx = int(target) - 1
         if idx < 0 or idx >= len(bots):
             raise SystemExit(f"目标序号 {target} 超出范围（共 {len(bots)} 个账号）")
@@ -205,9 +330,12 @@ def select_bots(target: str) -> list[RenewalBot]:
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else "probe"
     target = sys.argv[2] if len(sys.argv) > 2 else "all"
+    reason_type = sys.argv[3] if len(sys.argv) > 3 else "2"
 
     if mode not in ("probe", "reboot"):
         raise SystemExit(f"未知模式: {mode}（支持 probe / reboot）")
+    if reason_type not in ("1", "2", "3"):
+        raise SystemExit(f"未知重启理由: {reason_type}（1=Maintenance 2=Server does not respond 3=Other）")
 
     bots = select_bots(target)
     ok = True
@@ -216,7 +344,7 @@ def main() -> None:
             if mode == "probe":
                 probe_account(bot)
             else:
-                reboot_account(bot)
+                reboot_account(bot, target, reason_type)
         except Exception as e:  # noqa: BLE001 —— 顶层兜底，保证日志与 TG 报告完整
             bot.log(f"❗ 执行失败: {e}", LogLevel.WARNING)
             ok = False

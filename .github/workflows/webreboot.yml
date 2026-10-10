@@ -17,6 +17,10 @@ on:
         description: 'Telegram 来源校验（Worker 自动填，手动触发留空）'
         required: false
         default: ''
+      reason:
+        description: '重启理由: 1=Maintenance 2=Server does not respond 3=Other'
+        required: false
+        default: '2'
 permissions:
   contents: read
 jobs:
@@ -48,6 +52,8 @@ jobs:
       - name: Telegram 来源校验
         env:
           TG_USER_ID: ${{ secrets.TG_USER_ID }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_API_HOST: ${{ secrets.TG_API_HOST }}
         run: |
           CHAT="$(echo '${{ github.event.inputs.chat_id }}' | tr -d '[:space:]')"
           ALLOW="$(echo "$TG_USER_ID" | tr -d '[:space:]')"
@@ -58,6 +64,11 @@ jobs:
           case ",$ALLOW," in
             *",$CHAT,"*)
               echo "✅ Telegram 来源校验通过: $CHAT"
+              TG_HOST="${TG_API_HOST:-https://api.telegram.org}"
+              curl -s -m 20 "${TG_HOST}/bot${TG_BOT_TOKEN}/sendMessage" \
+                -d "chat_id=${CHAT}" \
+                --data-urlencode "text=🫡 已收到重启指令 (目标: ${{ github.event.inputs.target }})，正在登录 EUServ 面板执行网页端重启，完成后回报结果…" \
+                || echo "TG 回执失败(不影响执行)"
               ;;
             *)
               echo "❌ 未授权的 Telegram 用户，拒绝执行"
@@ -85,7 +96,7 @@ jobs:
           TG_API_HOST: ${{ secrets.TG_API_HOST }}
         run: |
           source venv/bin/activate
-          python Euserv_WebReboot.py ${{ github.event.inputs.mode }} ${{ github.event.inputs.target }}
+          python Euserv_WebReboot.py ${{ github.event.inputs.mode }} ${{ github.event.inputs.target }} ${{ github.event.inputs.reason }}
       - name: Upload probe artifacts
         if: always()
         uses: actions/upload-artifact@v7

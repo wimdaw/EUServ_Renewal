@@ -1,0 +1,12 @@
+name = "euserv-tg-reboot"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# 自定义域名（seurl.eu.org 区域在账号 A）。Telegram 服务器回调本 Worker，
+# 绑定自定义域名便于国内浏览器访问管理，避免 workers.dev。
+routes = [
+  { pattern = "reboot.seurl.eu.org", custom_domain = true }
+]
+
+[observability]
+enabled = true

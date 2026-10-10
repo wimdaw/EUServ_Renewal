@@ -1,0 +1,34 @@
+name: Telegram Webhook Setup
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'webhook 地址（留空=删除 webhook 恢复轮询模式）'
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set or delete webhook
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_API_HOST: ${{ secrets.TG_API_HOST }}
+          TG_WEBHOOK_SECRET: ${{ secrets.TG_WEBHOOK_SECRET }}
+          URL: ${{ github.event.inputs.url }}
+        run: |
+          TG_HOST="${TG_API_HOST:-https://api.telegram.org}"
+          if [ -z "$URL" ]; then
+            echo "删除 webhook..."
+            curl -s "${TG_HOST}/bot${TG_BOT_TOKEN}/deleteWebhook" | head -c 300; echo
+          else
+            echo "设置 webhook: $URL"
+            curl -s "${TG_HOST}/bot${TG_BOT_TOKEN}/setWebhook" \
+              --data-urlencode "url=${URL}" \
+              -d "secret_token=${TG_WEBHOOK_SECRET}" \
+              -d "allowed_updates=[\"message\"]" | head -c 300; echo
+          fi
+          echo "--- 当前状态 ---"
+          curl -s "${TG_HOST}/bot${TG_BOT_TOKEN}/getWebhookInfo" | head -c 500; echo
