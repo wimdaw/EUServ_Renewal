@@ -327,6 +327,147 @@ def reboot_account(bot: RenewalBot, target: str, reason_type: str) -> bool:
     return True
 
 
+def _reinstall_details(bot: RenewalBot, ord_no: str, lang: str = "en") -> dict:
+    """加载重装详情（OS 列表 / 安装设备），只读。"""
+    resp = bot.session.get(
+        f"{er.EUSERV_BASE_URL}"
+        f"?sess_id={bot.sess_id}"
+        f"&subaction=kc2_server_reinstall_get_details"
+        f"&kc2_server_reinstall_action=show_default_modules_html"
+        f"&osfl_lang={lang}&os_type=normal",
+        headers={"user-agent": er.USER_AGENT},
+        timeout=er.HTTP_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    text = resp.text
+
+    # OS 单选列表: <input ... name="kc2_server_reinstall_os_radio" value="<srv_os_id>" ...> + 邻近 label
+    os_list: list[dict] = []
+    for m in re.finditer(r"<input[^>]*name=\"kc2_server_reinstall_os_radio\"[^>]*>", text):
+        tag = m.group(0)
+        val_m = re.search(r"value=\"([^\"]*)\"", tag)
+        if not val_m:
+            continue
+        # 取该 radio 到下一个 radio 之间的文本作为名称
+        nxt = re.search(r"<input[^>]*name=\"kc2_server_reinstall_os_radio\"", text[m.end():])
+        seg = text[m.end(): m.end() + nxt.start()] if nxt else text[m.end(): m.end() + 1500]
+        seg = seg.split("</tr>")[0]
+        name = _strip_tags(seg).strip(" :")[:80]
+        os_list.append({"id": val_m.group(1), "name": name or "(未知名)"})
+
+    # 安装设备下拉（可选）
+    devices: list[dict] = []
+    sel = re.search(
+        r"<select[^>]*name=\"kc2_server_reinstall_select_install_device\"[^>]*>(.*?)</select>",
+        text, re.S,
+    )
+    if sel:
+        for o in re.finditer(r"<option[^>]*value=\"([^\"]*)\"[^>]*>([^<]*)", sel.group(1)):
+            devices.append({"id": o.group(1), "name": _strip_tags(o.group(2))})
+
+    return {"os_list": os_list, "devices": devices}
+
+
+def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, confirm: bool, lang: str = "en") -> dict:
+    """提交重装订单。confirm=False 时仅询价（面板返回 rc=1030 与支付明细，不会执行）。"""
+    params = (
+        f"sess_id={bot.sess_id}"
+        f"&subaction=kc2_server_reinstall_do_reinstall"
+        f"&ord_id={ord_no}"
+        f"&os_lang={lang}"
+        f"&srv_os_id={os_id}"
+        f"&wipe_hdds=1"
+        f"&reset_bootdevice=1"
+    )
+    if confirm:
+        params += "&confirm_os_license_payment=1"
+    resp = bot.session.get(
+        f"{er.EUSERV_BASE_URL}?{params}",
+        headers={"user-agent": er.USER_AGENT},
+        timeout=er.HTTP_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    try:
+        return resp.json()
+    except ValueError:
+        return {"rc": "PARSE_ERROR", "rs": resp.text[:400]}
+
+
+def reinstall_account(bot: RenewalBot, target: str, os_arg: str, confirm: bool, lang: str = "en") -> bool:
+    """重装流程：list 模式列系统；给 os_id 则下单（先询价）。"""
+    bot.log(f"--- Reinstall 账号【{bot.account_name}】target={target} ---")
+    bot.prewarm_ocr()
+    bot._perform_login()
+
+    servers = bot._get_servers()
+    # 解析目标合同：合同号(>2位数字)精确匹配；1/2/all 时取该账号全部合同
+    ids = [str(s["id"]) for s in servers]
+    if target.isdigit() and len(target) > 2:
+        candidates = [target] if target in ids else []
+    else:
+        candidates = ids
+    if not candidates:
+        bot.log(f"⏭️ 账号下没有匹配目标 {target} 的合同（现有: {ids}）")
+        return True
+
+    capable = []
+    for order_id in candidates:
+        detail = _choose_order(bot, order_id)
+        if "show_kc2_server_reinstall" in detail:
+            capable.append(order_id)
+        else:
+            bot.log(f"⏭️ 合同 {order_id}: 面板未提供 Reinstallation 入口，跳过")
+    if not capable:
+        bot.log("❗ 没有任何合同支持重装", LogLevel.WARNING)
+        return False
+
+    order_id = capable[0]
+    details = _reinstall_details(bot, order_id, lang)
+    os_list = details["os_list"]
+    if not os_list:
+        bot.log(f"❗ 合同 {order_id}: 未能解析出可安装系统列表（页面结构可能已变化）", LogLevel.WARNING)
+        return False
+
+    devices = details["devices"]
+    if devices:
+        bot.log(f"安装设备: {[(d['id'], d['name']) for d in devices]}")
+
+    if os_arg in ("", "list", "-"):
+        bot.log(f"📋 合同 {order_id} 可安装系统（os_lang={lang}），共 {len(os_list)} 项：")
+        for o in os_list:
+            bot.log(f"   os_id={o['id']}  |  {o['name']}")
+        bot.log(f"下单命令: /reinstall {order_id} <os_id> [confirm]  ⚠️ 重装会清空全部数据")
+        return True
+
+    matched = [o for o in os_list if o["id"] == os_arg]
+    if not matched:
+        bot.log(f"❗ os_id={os_arg} 不在可安装列表中，可用: {[(o['id'], o['name']) for o in os_list]}")
+        return False
+    os_name = matched[0]["name"]
+
+    result = _reinstall_order(bot, order_id, os_arg, confirm, lang)
+    rc = str(result.get("rc", "?"))
+    if rc == "1030":
+        bot.log(f"💰 合同 {order_id}: 重装【{os_name}】需要支付确认，面板返回支付明细:")
+        bot.log(f"   {str(result.get('payments'))[:600]}")
+        bot.log("⚠️ 数据将被全部清空且可能产生费用！确认执行请再发: /reinstall "
+                f"{order_id} {os_arg} confirm")
+        return True
+    if rc == "100":
+        msg = re.sub(r"<[^>]+>|\s+", " ", str(result.get("rs", "")))[:300]
+        bot.log(f"❗ 合同 {order_id}: 面板拒绝重装: {msg}", LogLevel.WARNING)
+        return False
+    if rc == "PARSE_ERROR":
+        bot.log(f"❗ 合同 {order_id}: 响应解析失败: {result.get('rs')}", LogLevel.WARNING)
+        return False
+
+    msg = re.sub(r"<[^>]+>|\s+", " ", str(result.get("rs", "")))[:300]
+    bot.log(f"{'✅' if confirm else 'ℹ️'} 合同 {order_id} 重装【{os_name}】下单结果 rc={rc}: {msg}")
+    if confirm:
+        bot.log("🎉 重装指令已下发，系统将全盘清空并重装，机器会离线一段时间后以全新系统上线")
+    return True
+
+
 def select_bots(target: str) -> list[RenewalBot]:
     """按目标序号(1/2)或 all 选择账号机器人；合同号目标时返回全部账号（后续按合同过滤）。"""
     accounts = parse_accounts()
@@ -346,12 +487,18 @@ def select_bots(target: str) -> list[RenewalBot]:
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else "probe"
     target = sys.argv[2] if len(sys.argv) > 2 else "all"
-    reason_type = sys.argv[3] if len(sys.argv) > 3 else "2"
+    arg3 = sys.argv[3] if len(sys.argv) > 3 else ""
+    arg4 = sys.argv[4] if len(sys.argv) > 4 else ""
+    arg5 = sys.argv[5] if len(sys.argv) > 5 else "en"
 
-    if mode not in ("probe", "reboot"):
-        raise SystemExit(f"未知模式: {mode}（支持 probe / reboot）")
-    if reason_type not in ("1", "2", "3"):
-        raise SystemExit(f"未知重启理由: {reason_type}（1=Maintenance 2=Server does not respond 3=Other）")
+    if mode not in ("probe", "reboot", "reinstall"):
+        raise SystemExit(f"未知模式: {mode}（支持 probe / reboot / reinstall）")
+    if mode == "reinstall":
+        os_arg = arg3 if arg3 else "list"
+        confirm = arg4.lower() == "confirm"
+    else:
+        if arg3 and arg3 not in ("1", "2", "3"):
+            raise SystemExit(f"未知重启理由: {arg3}（1=Maintenance 2=Server does not respond 3=Other）")
 
     bots = select_bots(target)
     # target 为账号序号(1/2)时账号已由 select_bots 选中，合同维度按 all 处理；
@@ -366,8 +513,10 @@ def main() -> None:
         try:
             if mode == "probe":
                 probe_account(bot)
+            elif mode == "reboot":
+                reboot_account(bot, contract_target, arg3 or "2")
             else:
-                reboot_account(bot, contract_target, reason_type)
+                reinstall_account(bot, contract_target, os_arg, confirm, arg5 or "en")
         except Exception as e:  # noqa: BLE001 —— 顶层兜底，保证日志与 TG 报告完整
             bot.log(f"❗ 执行失败: {e}", LogLevel.WARNING)
             ok = False
