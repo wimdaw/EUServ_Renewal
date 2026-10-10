@@ -338,13 +338,20 @@ def main() -> None:
         raise SystemExit(f"未知重启理由: {reason_type}（1=Maintenance 2=Server does not respond 3=Other）")
 
     bots = select_bots(target)
+    # target 为账号序号(1/2)时账号已由 select_bots 选中，合同维度按 all 处理；
+    # target 为合同号或 all 时按合同号过滤。
+    contract_target = (
+        "all"
+        if (not target or target.lower() == "all" or (target.isdigit() and len(target) <= 2))
+        else target
+    )
     ok = True
     for bot in bots:
         try:
             if mode == "probe":
                 probe_account(bot)
             else:
-                reboot_account(bot, target, reason_type)
+                reboot_account(bot, contract_target, reason_type)
         except Exception as e:  # noqa: BLE001 —— 顶层兜底，保证日志与 TG 报告完整
             bot.log(f"❗ 执行失败: {e}", LogLevel.WARNING)
             ok = False
