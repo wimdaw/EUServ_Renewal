@@ -351,7 +351,7 @@ def _reinstall_details(bot: RenewalBot, ord_no: str, lang: str = "en") -> dict:
         # 取该 radio 到下一个 radio 之间的文本作为名称
         nxt = re.search(r"<input[^>]*name=\"kc2_server_reinstall_os_radio\"", text[m.end():])
         seg = text[m.end(): m.end() + nxt.start()] if nxt else text[m.end(): m.end() + 1500]
-        seg = seg.split("</tr>")[0]
+        seg = re.split(r"\(/kc2_server_reinstall|</tr>", seg)[0]
         name = _strip_tags(seg).strip(" :")[:80]
         os_list.append({"id": val_m.group(1), "name": name or "(未知名)"})
 
