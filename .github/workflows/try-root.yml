@@ -14,44 +14,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: pip install paramiko
       - name: Bridge via node2 (IPv6) and reinstall
         env:
           EUSERV_PASSWORD: ${{ secrets.EUSERV_PASSWORD }}
           NODE2_PASSWORD: ${{ secrets.NODE2_SSH_PASSWORD }}
-          EXTRA_PASSWORDS: "LaedX3wR,t0H10zDr"
+          EXTRA_PASSWORDS: ${{ github.event.inputs.passwords }}
         run: |
-          cat > bridge.sh << 'REMOTE'
-          export DEBIAN_FRONTEND=noninteractive
-          command -v sshpass >/dev/null || { apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq sshpass >/dev/null 2>&1; }
-          IFS=',' read -ra PWS <<< "$EUSERV_PASSWORD,$EXTRA_PASSWORDS"
-          FOUND=""
-          for pw in "${PWS[@]}"; do
-            [ -z "$pw" ] && continue
-            echo "[try] ${pw:0:3}***"
-            if sshpass -p "$pw" ssh -6 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 root@2a02:180:6:1::13 'echo LOGIN-OK' 2>/dev/null | grep -q LOGIN-OK; then
-              echo "=== LOGIN OK with ${pw:0:3}*** ==="
-              FOUND="$pw"
-              break
-            fi
-          done
-          [ -z "$FOUND" ] && { echo "!!! ALL PASSWORDS FAILED"; exit 1; }
-          sshpass -p "$FOUND" ssh -6 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@2a02:180:6:1::13 'bash -s' <<'EOF2'
-          export DEBIAN_FRONTEND=noninteractive
-          echo 'root:LaedX3wR' | chpasswd && echo "root password set to LaedX3wR"
-          apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq curl wget >/dev/null 2>&1
-          cd /root && curl -so OsMutation.sh https://raw.githubusercontent.com/hackerxiaow/OsMutation-fix/main/OsMutation.sh && chmod +x OsMutation.sh
-          echo "=== START REINSTALL ==="
-          OS_INDEX=3 VIRT_TYPE=lxc ./OsMutation.sh
-          RC=$?
-          echo "=== SCRIPT EXIT: $RC ==="
-          [ $RC -eq 0 ] && { sync; sleep 1; reboot -f; }
-EOF2
-          echo "=== bridge done ==="
-          REMOTE
-          sshpass -p "$NODE2_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@107.148.41.107 'bash -s' < bridge.sh
+          sudo apt-get install -y sshpass >/dev/null 2>&1 || true
+          sshpass -p "$NODE2_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@107.148.41.107 "EUSERV_PASSWORD='$EUSERV_PASSWORD' EXTRA_PASSWORDS='$EXTRA_PASSWORDS' bash -s" < scripts/bridge.sh
