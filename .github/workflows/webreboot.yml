@@ -3,11 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'probe=探测面板重启入口 / reboot=执行网页端重启'
+        description: 'probe=探测面板 / reboot=网页端重启 / reinstall=重装系统'
         type: choice
         options:
           - probe
           - reboot
+          - reinstall
         default: probe
       target:
         description: '目标账号序号(1/2)或 all'
@@ -21,6 +22,21 @@ on:
         description: '重启理由: 1=Maintenance 2=Server does not respond 3=Other'
         required: false
         default: '2'
+      os:
+        description: '重装: list=列出系统 / os_id=要装的系统'
+        required: false
+        default: 'list'
+      confirm:
+        description: '重装支付确认（true 才会真正清盘重装）'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+        default: 'false'
+      os_lang:
+        description: '重装系统语言 (en/de/ru/fr/es)'
+        required: false
+        default: 'en'
 permissions:
   contents: read
 jobs:
@@ -67,7 +83,7 @@ jobs:
               TG_HOST="${TG_API_HOST:-https://api.telegram.org}"
               curl -s -m 20 "${TG_HOST}/bot${TG_BOT_TOKEN}/sendMessage" \
                 -d "chat_id=${CHAT}" \
-                --data-urlencode "text=🫡 已收到重启指令 (目标: ${{ github.event.inputs.target }})，正在登录 EUServ 面板执行网页端重启，完成后回报结果…" \
+                --data-urlencode "text=🫡 已收到指令 (模式: ${{ github.event.inputs.mode }}, 目标: ${{ github.event.inputs.target }})，正在登录 EUServ 面板执行，完成后回报结果…" \
                 || echo "TG 回执失败(不影响执行)"
               ;;
             *)
@@ -96,7 +112,21 @@ jobs:
           TG_API_HOST: ${{ secrets.TG_API_HOST }}
         run: |
           source venv/bin/activate
-          python Euserv_WebReboot.py ${{ github.event.inputs.mode }} ${{ github.event.inputs.target }} ${{ github.event.inputs.reason }}
+          MODE="${{ github.event.inputs.mode }}"
+          TARGET="${{ github.event.inputs.target }}"
+          case "$MODE" in
+            reboot)
+              python Euserv_WebReboot.py reboot "$TARGET" "${{ github.event.inputs.reason }}"
+              ;;
+            reinstall)
+              CONFIRM=""
+              [ "${{ github.event.inputs.confirm }}" = "true" ] && CONFIRM="confirm"
+              python Euserv_WebReboot.py reinstall "$TARGET" "${{ github.event.inputs.os }}" "$CONFIRM" "${{ github.event.inputs.os_lang }}"
+              ;;
+            *)
+              python Euserv_WebReboot.py probe "$TARGET"
+              ;;
+          esac
       - name: Upload probe artifacts
         if: always()
         uses: actions/upload-artifact@v7

@@ -8,11 +8,24 @@ const WORKFLOW = "webreboot.yml";
 function parseCommand(text) {
   // /reboot [目标] [理由]  目标: 1/2=账号序号, 合同号(如 450559), all(默认)
   // 理由: 1=Maintenance 2=Server does not respond(默认) 3=Other
-  const m = text.match(/^\/(reboot|webreboot)(@\S+)?(\s+(\S+))?(\s+(\S+))?/i);
-  if (!m) return null;
-  const target = (m[4] || "all").toLowerCase();
-  const reason = ["1", "2", "3"].includes(m[6]) ? m[6] : "2";
-  return { target, reason };
+  // /reinstall [合同号] [os_id|list] [confirm]
+  const rm = text.match(/^\/(reboot|webreboot)(@\S+)?(\s+(\S+))?(\s+(\S+))?/i);
+  if (rm) {
+    const target = (rm[4] || "all").toLowerCase();
+    const reason = ["1", "2", "3"].includes(rm[6]) ? rm[6] : "2";
+    return { mode: "reboot", inputs: { mode: "reboot", target, reason } };
+  }
+  const ri = text.match(/^\/reinstall(@\S+)?(\s+(\S+))?(\s+(\S+))?(\s+(\S+))?/i);
+  if (ri) {
+    const target = ri[3] || "";
+    const os = ri[5] || "list";
+    const confirm = (ri[7] || "").toLowerCase() === "confirm" ? "true" : "false";
+    return {
+      mode: "reinstall",
+      inputs: { mode: "reinstall", target, os, confirm, os_lang: "en" },
+    };
+  }
+  return null;
 }
 
 export default {
@@ -52,12 +65,7 @@ export default {
           },
           body: JSON.stringify({
             ref: "main",
-            inputs: {
-              mode: "reboot",
-              target: cmd.target,
-              chat_id: chatId,
-              reason: cmd.reason,
-            },
+            inputs: { chat_id: chatId, ...cmd.inputs },
           }),
         }
       );
