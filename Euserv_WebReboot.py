@@ -156,6 +156,29 @@ def probe_account(bot: RenewalBot) -> bool:
             f.write(step1.text)
         for line in extract_candidates(step1.text):
             bot.log(line)
+
+        # 详情页若带 Webreboot 导航，则继续只读访问 reset_init 页面，
+        # 摸清确认表单结构（GET 仅展示，无副作用）
+        if "kc2_server_reset_init" in step1.text:
+            bot.log(f"---------- 合同 {order_id} Webreboot 初始化页 ----------")
+            reset_page = bot.session.get(
+                f"{er.EUSERV_BASE_URL}?sess_id={bot.sess_id}&subaction=kc2_server_reset_init",
+                headers={"user-agent": er.USER_AGENT},
+                timeout=er.HTTP_TIMEOUT_SECONDS,
+            )
+            reset_page.raise_for_status()
+            with open(f"probe_reset_{order_id}.html", "w", encoding="utf-8") as f:
+                f.write(reset_page.text)
+            for line in extract_candidates(reset_page.text):
+                bot.log(line)
+            # 完整输出主内容区可见文本，便于判断确认按钮与说明
+            soup = BeautifulSoup(reset_page.text, "html.parser")
+            main = soup.select_one("#main_content") or soup.body
+            if main:
+                text = re.sub(r"\s{2,}", "\n", main.get_text("\n"))
+                bot.log(f"[reset 页可见文本]\n{text[:1500]}")
+        else:
+            bot.log(f"合同 {order_id}: 面板未提供 Webreboot 导航（跳过 reset 探测）")
     return True
 
 
