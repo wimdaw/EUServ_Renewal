@@ -13,7 +13,41 @@ import re
 import sys
 from datetime import date
 
+import requests
+
 from Euserv_Renewal import RenewalBot, parse_accounts
+
+
+def dump_cloud_mail(bot: RenewalBot) -> None:
+    """通过 Cloud Mail API dump 来自 EUServ 的最近邮件。"""
+    base = (bot.cloud_mail_api_url or "").rstrip("/")
+    if not base:
+        bot.log("未配置 CLOUD_MAIL_API_URL")
+        return
+    bot.log(f"--- Cloud Mail Dump【{bot.account_name}】({base}) ---")
+    resp = requests.post(f"{base}/api/public/genToken",
+                         json={"email": bot.email_username, "password": bot.email_password},
+                         timeout=30)
+    result = resp.json()
+    if result.get("code") != 200:
+        bot.log(f"❗ genToken 失败: {str(result)[:200]}")
+        return
+    token = (result.get("data") or {}).get("token")
+    resp = requests.post(f"{base}/api/public/emailList",
+                         json={"toEmail": bot.username, "sendEmail": "no-reply@euserv.com",
+                               "type": 0, "timeSort": "desc", "num": 1, "size": 15},
+                         headers={"Authorization": token}, timeout=30)
+    result = resp.json()
+    if result.get("code") != 200:
+        bot.log(f"❗ emailList 失败: {str(result)[:200]}")
+        return
+    emails = result.get("data") or []
+    bot.log(f"共 {len(emails)} 封 EUServ 邮件")
+    for item in emails:
+        bot.log(f"===== {item.get('createTime')} | {item.get('subject')}")
+        body = re.sub(r"<[^>]+>", " ", item.get("text") or item.get("content") or "")
+        body = re.sub(r"\s+", " ", body).strip()
+        bot.log(f"  Body: {body[:1400]}")
 
 
 def decode_body(msg: email.message.Message) -> str:
@@ -78,12 +112,14 @@ def dump_mailbot(bot: RenewalBot, keyword: str) -> None:
 
 
 def main() -> int:
-    keyword = sys.argv[1] if len(sys.argv) > 1 else ""
     accounts = parse_accounts()
     bots = [RenewalBot(account=a) for a in accounts] if accounts else [RenewalBot()]
     for bot in bots:
         try:
-            dump_mailbot(bot, keyword)
+            if bot.cloud_mail_api_url:
+                dump_cloud_mail(bot)
+            else:
+                dump_mailbot(bot, sys.argv[1] if len(sys.argv) > 1 else "")
         except Exception as exc:  # noqa: BLE001
             bot.log(f"❗ MailDump 失败: {exc}")
             return 1
