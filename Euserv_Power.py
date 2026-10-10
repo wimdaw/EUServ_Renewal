@@ -109,6 +109,32 @@ def _power_on_one(bot: RenewalBot, order_id: str) -> bool:
     return False
 
 
+def _rescue_activate(bot: RenewalBot, order_id: str) -> bool:
+    """激活 Rescue System(POST 表单), 并 dump 激活后页面找 rescue root 密码。"""
+    _choose_order(bot, order_id)
+    resp = bot.session.post(
+        er.EUSERV_BASE_URL,
+        data={
+            "form_srvord_rescuemodus": "1",
+            "subaction": "server::process::rescuesystem",
+            "sess_id": bot.sess_id,
+            "form_rescue": "3",
+            "Submit": "Activate",
+        },
+        headers={"user-agent": er.USER_AGENT},
+        timeout=er.HTTP_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    with open(f"rescue_activated_{order_id}.html", "w", encoding="utf-8") as f:
+        f.write(resp.text)
+    t = re.sub(r"<script.*?</script>", " ", resp.text, flags=re.S)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"\s+", " ", t)
+    i = t.lower().find("rescue")
+    bot.log("🛟 Rescue 激活响应: " + t[max(0, i - 100): i + 1600])
+    return True
+
+
 def power_account(bot: RenewalBot, target: str, action: str) -> bool:
     bot.log(f"--- Power 账号【{bot.account_name}】action={action} ---")
     bot.prewarm_ocr()
@@ -155,6 +181,8 @@ def power_account(bot: RenewalBot, target: str, action: str) -> bool:
                 body = re.sub(r"\s+", " ", body)
                 hit = [k for k in ("postinstall", "Postinstall") if k in resp2.text]
                 bot.log(f"🔍 {sub} dump 完成, postinstall 命中: {hit}")
+        elif action == "rescue":
+            ok = _rescue_activate(bot, order_id) and ok
         else:
             ok = _power_on_one(bot, order_id) and ok
     return ok
@@ -175,7 +203,7 @@ def select_bots(target: str) -> list[RenewalBot]:
 def main() -> int:
     args = sys.argv[1:]
     action = args[0] if args else "probe"
-    if action not in ("probe", "on", "poweron"):
+    if action not in ("probe", "on", "poweron", "rescue"):
         print(f"未知动作: {action} (可用: probe/on)")
         return 2
     target = args[1] if len(args) > 1 else "all"
