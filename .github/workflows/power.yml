@@ -57,5 +57,6 @@ jobs:
           name: power-dump
           path: |
             power_*.html
+            rescue_*.html
           if-no-files-found: ignore
           retention-days: 7

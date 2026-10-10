@@ -129,6 +129,17 @@ def power_account(bot: RenewalBot, target: str, action: str) -> bool:
         if action == "probe":
             page = _power_page(bot, order_id)
             bot.log(f"🔍 合同 {order_id} 电源状态: {_status_of(page)} (页面已 dump 到 power_{order_id}.html)")
+            resp = bot.session.get(
+                f"{er.EUSERV_BASE_URL}"
+                f"?sess_id={bot.sess_id}"
+                f"&subaction=show_server_rescuesystem",
+                headers={"user-agent": er.USER_AGENT},
+                timeout=er.HTTP_TIMEOUT_SECONDS,
+            )
+            resp.raise_for_status()
+            with open(f"rescue_{order_id}.html", "w", encoding="utf-8") as f:
+                f.write(resp.text)
+            bot.log(f"🔍 合同 {order_id} Rescue 页已 dump 到 rescue_{order_id}.html")
         else:
             ok = _power_on_one(bot, order_id) and ok
     return ok
