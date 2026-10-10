@@ -149,7 +149,7 @@ def select_bots(target: str) -> list[RenewalBot]:
 def main() -> int:
     args = sys.argv[1:]
     action = args[0] if args else "probe"
-    if action not in ("probe", "on"):
+    if action not in ("probe", "on", "poweron"):
         print(f"未知动作: {action} (可用: probe/on)")
         return 2
     target = args[1] if len(args) > 1 else "all"
