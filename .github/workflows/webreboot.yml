@@ -138,6 +138,7 @@ jobs:
           name: webreboot-probe
           path: |
             probe_*.html
+            reinstall_details_*.html
             captcha_failed.png
           if-no-files-found: ignore
           retention-days: 7

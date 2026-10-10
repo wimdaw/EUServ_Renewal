@@ -340,6 +340,8 @@ def _reinstall_details(bot: RenewalBot, ord_no: str, lang: str = "en") -> dict:
     )
     resp.raise_for_status()
     text = resp.text
+    with open(f"reinstall_details_{ord_no}.html", "w", encoding="utf-8") as f:
+        f.write(text)
 
     # OS 单选列表: <input ... name="kc2_server_reinstall_os_radio" value="<srv_os_id>" ...> + 邻近 label
     os_list: list[dict] = []
