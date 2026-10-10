@@ -3,14 +3,16 @@ on:
   schedule:
     - cron: 0 0 25 9 *
   workflow_dispatch:
+# contents:write 供「Update schedule」步骤把动态 cron 推回 main；
+# checkout/push 全部走内置 github.token，不再依赖会过期的自定义 PAT。
+permissions:
+  contents: write
 jobs:
   renew-vps:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-        with:
-          token: ${{ secrets.PAT_WITH_WORKFLOW_SCOPE }}
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -93,7 +95,7 @@ jobs:
       - name: Update schedule for next renewal
         if: steps.renewal.outputs.next_cron != ''
         env:
-          GH_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW_SCOPE }}
+          GH_TOKEN: ${{ github.token }}
           NEXT_CRON: ${{ steps.renewal.outputs.next_cron }}
           NEXT_DATE: ${{ steps.renewal.outputs.next_date }}
         run: |
