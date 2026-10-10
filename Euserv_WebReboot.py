@@ -210,6 +210,33 @@ def probe_account(bot: RenewalBot) -> bool:
                 bot.log(f"[reset 页可见文本]\n{text[:1500]}")
         else:
             bot.log(f"合同 {order_id}: 面板未提供 Webreboot 导航（跳过 reset 探测）")
+
+        # 只读探测重装页：系统镜像列表与确认表单
+        if "show_kc2_server_reinstall" in detail:
+            bot.log(f"---------- 合同 {order_id} 重装(Reinstallation)初始化页 ----------")
+            page = bot.session.get(
+                f"{er.EUSERV_BASE_URL}?sess_id={bot.sess_id}&subaction=show_kc2_server_reinstall",
+                headers={"user-agent": er.USER_AGENT},
+                timeout=er.HTTP_TIMEOUT_SECONDS,
+            )
+            page.raise_for_status()
+            with open(f"probe_reinstall_{order_id}.html", "w", encoding="utf-8") as f:
+                f.write(page.text)
+            soup = BeautifulSoup(page.text, "html.parser")
+            main = soup.select_one("#main_content") or soup.body
+            if main:
+                text = re.sub(r"\s{2,}", "\n", main.get_text("\n"))
+                bot.log(f"[reinstall 页可见文本]\n{text[:2000]}")
+            for sel in main.select("select") if main else []:
+                opts = [(o.get("value", ""), o.get_text(strip=True)[:40]) for o in sel.select("option")]
+                bot.log(f"[select] name={sel.get('name')} id={sel.get('id')} 选项: {opts}")
+            for inp in main.select("input, button") if main else []:
+                tag = _strip_tags(str(inp))[:200]
+                if tag:
+                    bot.log(f"[input] {tag}")
+            # 找 JS 里的 reinstall subaction
+            for m in set(re.findall(r"(?i)subaction[\"']?\s*[:=]\s*[\"']([a-z0-9_:]*reinstall[a-z0-9_:]*)[\"']", page.text)):
+                bot.log(f"[reinstall subaction] {m}")
     return True
 
 
