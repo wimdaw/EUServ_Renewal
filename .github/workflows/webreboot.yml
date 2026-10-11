@@ -120,7 +120,8 @@ jobs:
               python Euserv_WebReboot.py reboot "$TARGET" "${{ github.event.inputs.reason }}"
               ;;
             reinstall)
-              CONFIRM="${{ github.event.inputs.confirm }}"
+              CONFIRM=""
+              [ "${{ github.event.inputs.confirm }}" = "true" ] && CONFIRM="confirm"
               python Euserv_WebReboot.py reinstall "$TARGET" "${{ github.event.inputs.os }}" "$CONFIRM" "${{ github.event.inputs.osps }}" "${{ github.event.inputs.os_lang }}"
               ;;
             *)
