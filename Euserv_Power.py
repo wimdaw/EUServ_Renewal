@@ -109,17 +109,18 @@ def _power_on_one(bot: RenewalBot, order_id: str) -> bool:
     return False
 
 
-def _rescue_activate(bot: RenewalBot, order_id: str) -> bool:
-    """激活 Rescue System(POST 表单), 并 dump 激活后页面找 rescue root 密码。"""
+def _rescue_activate(bot: RenewalBot, order_id: str, action_mode: str = "activate") -> bool:
+    """激活/停用 Rescue System(POST 表单)。action_mode: activate / deactivate。"""
     _choose_order(bot, order_id)
+    form_rescue = "7" if action_mode == "deactivate" else "3"
     resp = bot.session.post(
         er.EUSERV_BASE_URL,
         data={
             "form_srvord_rescuemodus": "1",
             "subaction": "server::process::rescuesystem",
             "sess_id": bot.sess_id,
-            "form_rescue": "3",
-            "Submit": "Activate",
+            "form_rescue": form_rescue,
+            "Submit": "Deactivate" if action_mode == "deactivate" else "Activate",
         },
         headers={"user-agent": er.USER_AGENT},
         timeout=er.HTTP_TIMEOUT_SECONDS,
@@ -181,8 +182,8 @@ def power_account(bot: RenewalBot, target: str, action: str) -> bool:
                 body = re.sub(r"\s+", " ", body)
                 hit = [k for k in ("postinstall", "Postinstall") if k in resp2.text]
                 bot.log(f"🔍 {sub} dump 完成, postinstall 命中: {hit}")
-        elif action == "rescue":
-            ok = _rescue_activate(bot, order_id) and ok
+        elif action in ("rescue", "rescuedown"):
+            ok = _rescue_activate(bot, order_id, "deactivate" if action == "rescuedown" else "activate") and ok
         else:
             ok = _power_on_one(bot, order_id) and ok
     return ok
@@ -203,7 +204,7 @@ def select_bots(target: str) -> list[RenewalBot]:
 def main() -> int:
     args = sys.argv[1:]
     action = args[0] if args else "probe"
-    if action not in ("probe", "on", "poweron", "rescue"):
+    if action not in ("probe", "on", "poweron", "rescue", "rescuedown"):
         print(f"未知动作: {action} (可用: probe/on)")
         return 2
     target = args[1] if len(args) > 1 else "all"
