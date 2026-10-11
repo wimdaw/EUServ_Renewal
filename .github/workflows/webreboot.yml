@@ -31,12 +31,9 @@ on:
         required: false
         default: 'list'
       confirm:
-        description: '重装支付确认（true 才会真正清盘重装）'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
-        default: 'false'
+        description: '重装执行确认: 空=仅选择 / confirm=执行重装 / confirm pay=执行并付OS授权费'
+        required: false
+        default: ''
       os_lang:
         description: '重装系统语言 (en/de/ru/fr/es)'
         required: false
@@ -123,8 +120,7 @@ jobs:
               python Euserv_WebReboot.py reboot "$TARGET" "${{ github.event.inputs.reason }}"
               ;;
             reinstall)
-              CONFIRM=""
-              [ "${{ github.event.inputs.confirm }}" = "true" ] && CONFIRM="confirm"
+              CONFIRM="${{ github.event.inputs.confirm }}"
               python Euserv_WebReboot.py reinstall "$TARGET" "${{ github.event.inputs.os }}" "$CONFIRM" "${{ github.event.inputs.osps }}" "${{ github.event.inputs.os_lang }}"
               ;;
             *)

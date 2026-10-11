@@ -380,8 +380,9 @@ def _reinstall_details(bot: RenewalBot, ord_no: str, lang: str = "en") -> dict:
     return {"os_list": os_list, "devices": devices, "postinstalls": osps}
 
 
-def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, confirm: bool, lang: str = "en", osps_id: str = "") -> dict:
-    """提交重装订单。confirm=False 时仅询价（面板返回 rc=1030 与支付明细，不会执行）。"""
+def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, pay: bool, lang: str = "en", osps_id: str = "") -> dict:
+    """提交重装订单——这是真正的执行调用，免费镜像首次提交即开始清盘重装！
+    仅当面板返回 rc=1030（所选镜像带 OS 授权费）时才需要 pay=True 的第二次提交。"""
     params = (
         f"sess_id={bot.sess_id}"
         f"&subaction=kc2_server_reinstall_do_reinstall"
@@ -393,7 +394,7 @@ def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, confirm: bool, la
     )
     if osps_id:
         params += f"&srv_osps_id={osps_id}"
-    if confirm:
+    if pay:
         params += "&confirm_os_license_payment=1"
     resp = bot.session.get(
         f"{er.EUSERV_BASE_URL}?{params}",
@@ -407,8 +408,9 @@ def _reinstall_order(bot: RenewalBot, ord_no: str, os_id: str, confirm: bool, la
         return {"rc": "PARSE_ERROR", "rs": resp.text[:400]}
 
 
-def reinstall_account(bot: RenewalBot, target: str, os_arg: str, confirm: bool, osps_id: str = "", lang: str = "en") -> bool:
-    """重装流程：list 模式列系统；给 os_id 则下单（先询价）。"""
+def reinstall_account(bot: RenewalBot, target: str, os_arg: str, confirm: str, osps_id: str = "", lang: str = "en") -> bool:
+    """重装流程：list 模式列系统；给 os_id 仅选中并提示确认；
+    confirm="confirm" 才真正提交执行，"confirm pay" 用于带授权费的镜像。"""
     bot.log(f"--- Reinstall 账号【{bot.account_name}】target={target} ---")
     bot.prewarm_ocr()
     bot._perform_login()
@@ -464,27 +466,32 @@ def reinstall_account(bot: RenewalBot, target: str, os_arg: str, confirm: bool, 
         return False
     os_name = matched[0]["name"]
 
-    result = _reinstall_order(bot, order_id, os_arg, confirm, lang, osps_id)
-    rc = str(result.get("rc", "?"))
-    if rc == "1030":
-        bot.log(f"💰 合同 {order_id}: 重装【{os_name}】需要支付确认，面板返回支付明细:")
-        bot.log(f"   {str(result.get('payments'))[:600]}")
-        bot.log("⚠️ 数据将被全部清空且可能产生费用！确认执行请再发: /reinstall "
-                f"{order_id} {os_arg} confirm")
+    # 安全闸门：do_reinstall 是执行型接口，免费镜像首次提交即真重装。
+    # 未带 confirm 字样时绝不提交！
+    if confirm not in ("confirm", "confirm pay"):
+        bot.log(f"⚠️ 已选中【{os_name}】(os_id={os_arg})，尚未确认执行。")
+        bot.log(f"⚠️ 重装会不可恢复地清空全部数据！确认执行请再发: /reinstall {order_id} {os_arg} confirm")
         return True
-    if rc == "100":
-        msg = re.sub(r"<[^>]+>|\s+", " ", str(result.get("rs", "")))[:300]
-        bot.log(f"❗ 合同 {order_id}: 面板拒绝重装: {msg}", LogLevel.WARNING)
-        return False
+
+    result = _reinstall_order(bot, order_id, os_arg, pay=(confirm == "confirm pay"), lang=lang, osps_id=osps_id)
+    rc = str(result.get("rc", "?"))
+    rs_text = re.sub(r"<[^>]+>|\s+", " ", str(result.get("rs", ""))).strip()
+    # 面板受理成功时 rs 为 "Thank you! Reinstallation will be started..."（rc 并非 0）
+    if "reinstallation will be started" in rs_text.lower():
+        bot.log(f"✅ 合同 {order_id} 重装【{os_name}】已受理: {rs_text[:300]}")
+        bot.log("🎉 系统将在下次重启时全盘清空并安装新系统，机器会离线一段时间（root 密码见重装密码邮件）")
+        return True
+    if rc == "1030":
+        bot.log(f"💰 合同 {order_id}: 镜像【{os_name}】带 OS 授权费，面板返回支付明细:")
+        bot.log(f"   {str(result.get('payments'))[:600]}")
+        bot.log(f"确认支付并执行请再发: /reinstall {order_id} {os_arg} confirm pay")
+        return True
     if rc == "PARSE_ERROR":
         bot.log(f"❗ 合同 {order_id}: 响应解析失败: {result.get('rs')}", LogLevel.WARNING)
         return False
 
-    msg = re.sub(r"<[^>]+>|\s+", " ", str(result.get("rs", "")))[:300]
-    bot.log(f"{'✅' if confirm else 'ℹ️'} 合同 {order_id} 重装【{os_name}】下单结果 rc={rc}: {msg}")
-    if confirm:
-        bot.log("🎉 重装指令已下发，系统将全盘清空并重装，机器会离线一段时间后以全新系统上线")
-    return True
+    bot.log(f"❗ 合同 {order_id}: 重装响应 rc={rc}: {rs_text[:300]}", LogLevel.WARNING)
+    return False
 
 
 def select_bots(target: str) -> list[RenewalBot]:
@@ -515,7 +522,9 @@ def main() -> None:
         raise SystemExit(f"未知模式: {mode}（支持 probe / reboot / reinstall）")
     if mode == "reinstall":
         os_arg = arg3 if arg3 else "list"
-        confirm = arg4.lower() == "confirm"
+        confirm = arg4.lower().strip()
+        if confirm not in ("", "confirm", "confirm pay"):
+            raise SystemExit("重装确认参数只能为空 / confirm / confirm pay")
     else:
         if arg3 and arg3 not in ("1", "2", "3"):
             raise SystemExit(f"未知重启理由: {arg3}（1=Maintenance 2=Server does not respond 3=Other）")
