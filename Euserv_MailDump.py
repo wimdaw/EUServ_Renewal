@@ -34,8 +34,8 @@ def dump_cloud_mail(bot: RenewalBot) -> None:
         return
     token = (result.get("data") or {}).get("token")
     resp = requests.post(f"{base}/api/public/emailList",
-                         json={"toEmail": bot.username, "sendEmail": "no-reply@euserv.com",
-                               "type": 0, "timeSort": "desc", "num": 1, "size": 15},
+                         json={"toEmail": bot.username,
+                               "type": 0, "timeSort": "desc", "num": 1, "size": 25},
                          headers={"Authorization": token}, timeout=30)
     result = resp.json()
     if result.get("code") != 200:
