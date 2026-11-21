@@ -17,6 +17,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -25,17 +26,21 @@ jobs:
         uses: actions/cache@v5
         with:
           path: venv
-          key: ${{ runner.os }}-venv-${{ hashFiles('requirements.txt') }}
+          # key 含解释器版本：runner 镜像升 Python 后缓存自动失效，避免拿到指向旧解释器的 venv
+          key: ${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-venv-${{ hashFiles('requirements.txt') }}
       - name: Create venv and Install dependencies
         run: |
-          if [ ! -d venv/bin ]; then
+          # 缓存的 venv 可能因 runner 镜像升级而损坏——venv/bin/python 软链指向
+          # 已被镜像移除的旧解释器目录（bad interpreter, exit 126，2026-11-06 起连续失败即此因）。
+          # 先做健康检查（解释器可执行且核心依赖可导入），不过关就整体重建。
+          if [ ! -x venv/bin/python ] || ! venv/bin/python -c "import requests, bs4" 2>/dev/null; then
+            echo "venv 缺失或损坏，重建..."
+            rm -rf venv
             python -m venv venv
           fi
           source venv/bin/activate
           python -m pip install --upgrade pip
-          if ! python -c "import requests, bs4" 2>/dev/null; then
-            pip install -r requirements.txt
-          fi
+          python -c "import requests, bs4" 2>/dev/null || pip install -r requirements.txt
       - name: Run renewal script with retry
         id: renewal
         env:
